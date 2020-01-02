@@ -31,8 +31,10 @@ from imapclient import IMAPClient
 
 
 @click.group()
-@click.option("--username", required=True, help="GMAIL username.")
-@click.option("--password", required=True, help="GMAIL password.")
+@click.option("--username", required=True, help="GMAIL username.", prompt=True)
+@click.option(
+    "--password", required=True, help="GMAIL password.", prompt=True, hide_input=True
+)
 @click.option("--debug/--no-debug", default=False, help="Enable debug logging.")
 @click_config_file.configuration_option(
     config_file_name=appdirs.user_config_dir("gmail.cfg")
