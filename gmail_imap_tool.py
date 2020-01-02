@@ -20,21 +20,24 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import click
-import click_config_file
-from datetime import datetime
 import email
 import logging
+from datetime import datetime
 from typing import List
 
 import appdirs
+import click
+import click_config_file
+import click_log
 from imapclient import IMAPClient
+
+logger = logging.getLogger(__name__)
+click_log.basic_config(logger)
 
 
 class GlobalOpts:
     username: str
     password: str
-    debug: bool
 
 
 @click.group()
@@ -42,21 +45,15 @@ class GlobalOpts:
 @click.option(
     "--password", required=True, help="GMAIL password.", prompt=True, hide_input=True
 )
-@click.option("--debug/--no-debug", default=False, help="Enable debug logging.")
+@click_log.simple_verbosity_option(logger)
 @click_config_file.configuration_option(
     config_file_name=appdirs.user_config_dir("gmail.cfg")
 )
 @click.pass_context
-def gmail_imap_tool(ctx: click.Context, username: str, password: str, debug: bool):
+def gmail_imap_tool(ctx: click.Context, username: str, password: str):
     global_opts = ctx.obj
     global_opts.username = username
     global_opts.password = password
-    global_opts.debug = debug
-
-    if debug:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
 
 
 @gmail_imap_tool.command()
@@ -72,16 +69,20 @@ def delete_folder(
 ) -> None:
     global_opts = ctx.obj
 
-    click.echo(f"Removing folder: {folder}")
+    logger.info(f"Removing folder {folder!r}...")
     client = imap_connect(global_opts.username, global_opts.password)
-    resp = client.select_folder(folder)
-    logging.debug("select_folder response:", resp)
 
+    logger.info(f"Selecting folder {folder!r}...")
+    resp = client.select_folder(folder)
+    logger.debug("select_folder response:", resp)
+
+    logger.info(f"Searching messages in folder {folder!r}...")
     message_ids = client.search()
     num_messages = len(message_ids)
+    logger.info(f"Found {num_messages} in folder {folder!r}.")
 
     if confirm and click.confirm(
-        f"Do you want to preview {num_messages} messages from {folder!r}?"
+        f"Do you want to preview some of the messages from {folder!r}?"
     ):
         preview_ids = list(set(message_ids[:128] + message_ids[-128:]))
         print_emails(client, preview_ids)
@@ -91,22 +92,22 @@ def delete_folder(
     ):
         while len(message_ids) > 0:
             current_ids = message_ids[:chunk_size]
-            click.echo(
+            logger.info(
                 "[{}] Deleting {} of {} messages, {} to go...".format(
                     datetime.now(), len(current_ids), num_messages, len(message_ids)
                 )
             )
             message_ids = message_ids[chunk_size:]
 
-            logging.debug("Setting label to Trash...")
+            logger.debug("Setting label to Trash...")
             resp = client.set_gmail_labels(current_ids, "\\Trash")
-            logging.debug("set_gmail_labels response:", resp)
+            logger.debug("set_gmail_labels response:", resp)
 
-            logging.debug("Deleting messages...")
+            logger.debug("Deleting messages...")
             resp = client.delete_messages(current_ids)
-            logging.debug("delete_messages response:", resp)
+            logger.debug("delete_messages response:", resp)
 
-        logging.info("Expunging messages...")
+        logger.info("Expunging messages...")
         client.expunge()
 
     client.close_folder()
@@ -120,15 +121,15 @@ def print_folders(ctx: click.Context) -> None:
     client = imap_connect(global_opts.username, global_opts.password)
     for folder in client.list_folders():
         name = folder[2]
-        click.echo(name)
+        logger.info(name)
     client.logout()
 
 
 def imap_connect(username: str, password: str) -> IMAPClient:
-    logging.debug("Connecting to GMAIL...")
+    logger.info("Connecting to GMAIL...")
     client = IMAPClient("imap.gmail.com", ssl=True)
     client.login(username, password)
-    logging.debug("Connected...")
+    logger.info("Connected.")
     return client
 
 
@@ -137,7 +138,7 @@ def print_emails(client: IMAPClient, message_ids: List[int]) -> None:
     for message in messages.values():
         message_data = message[b"RFC822"]
         message = email.message_from_bytes(message_data)
-        click.echo(message["subject"])
+        logger.info(message["subject"])
 
 
 if __name__ == "__main__":
