@@ -22,6 +22,7 @@
 
 import click
 import click_config_file
+from datetime import datetime
 import email
 from typing import List
 
@@ -44,12 +45,13 @@ def gmail_imap_tool(ctx, username, password, debug):
 
 
 @gmail_imap_tool.command()
-@click.option("--folder", required=True, help="GMAIL folder to delete.")
+@click.option("--chunk-size", default=1024, help="GMAIL folder to delete.")
 @click.option(
     "--dry-run", required=False, default=False, help="dry-run, do not delete."
 )
+@click.option("--folder", required=True, help="GMAIL folder to delete.")
 @click.pass_context
-def delete_folder(ctx, folder: str, dry_run: bool) -> None:
+def delete_folder(ctx, folder: str, dry_run: bool, chunk_size: int) -> None:
     username = ctx.obj["USERNAME"]
     password = ctx.obj["PASSWORD"]
     debug = ctx.obj["DEBUG"]
@@ -70,20 +72,32 @@ def delete_folder(ctx, folder: str, dry_run: bool) -> None:
         print_emails(client, preview_ids)
 
     if click.confirm(f"Do you want to delete {num_messages} messages from {folder!r}?"):
-        click.echo("Setting label to Trash...")
-        resp = client.set_gmail_labels(message_ids, "\\Trash")
-        if debug:
-            print("set_gmail_labels response:", resp)
+        while len(message_ids) > 0:
+            current_ids = message_ids[:chunk_size]
+            click.echo(
+                "[{}] Deleting {} of {} messages, {} to go...".format(
+                    datetime.now(), len(current_ids), num_messages, len(message_ids)
+                )
+            )
+            message_ids = message_ids[chunk_size:]
 
-        click.echo("Deleting messages...")
-        resp = client.delete_messages(message_ids)
-        if debug:
-            print("delete_messages response:", resp)
+            if debug:
+                click.echo("Setting label to Trash...")
+
+            resp = client.set_gmail_labels(current_ids, "\\Trash")
+
+            if debug:
+                click.echo("set_gmail_labels response:", resp)
+
+            if debug:
+                click.echo("Deleting messages...")
+
+            resp = client.delete_messages(current_ids)
+            if debug:
+                click.echo("delete_messages response:", resp)
 
         click.echo("Expunging messages...")
-        resp = client.expunge()
-        if debug:
-            print("expunging messages response:", resp)
+        client.expunge()
 
     client.close_folder()
     client.logout()
