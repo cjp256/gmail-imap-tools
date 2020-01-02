@@ -59,13 +59,10 @@ def gmail_imap_tool(ctx: click.Context, username: str, password: str):
 @gmail_imap_tool.command()
 @click.option("--chunk-size", default=1024, help="GMAIL folder to delete.")
 @click.option("--confirm/--no-confirm", default=True, help="Just do it.")
-@click.option(
-    "--dry-run", required=False, default=False, help="dry-run, do not delete."
-)
 @click.option("--folder", required=True, help="GMAIL folder to delete.")
 @click.pass_context
 def delete_folder(
-    ctx: click.Context, chunk_size: int, confirm: bool, dry_run: bool, folder: str
+    ctx: click.Context, chunk_size: int, confirm: bool, folder: str
 ) -> None:
     global_opts = ctx.obj
 
@@ -74,7 +71,7 @@ def delete_folder(
 
     logger.info(f"Selecting folder {folder!r}...")
     resp = client.select_folder(folder)
-    logger.debug("select_folder response:", resp)
+    logger.debug(f"select_folder response: {resp!r}")
 
     logger.info(f"Searching messages in folder {folder!r}...")
     message_ids = client.search()
@@ -105,12 +102,57 @@ def delete_folder(
 
             logger.debug("Deleting messages...")
             resp = client.delete_messages(current_ids)
-            logger.debug("delete_messages response:", resp)
+            logger.debug(f"delete_messages response: {resp!r}")
 
         logger.info("Expunging messages...")
         client.expunge()
 
     client.close_folder()
+    client.logout()
+
+
+@gmail_imap_tool.command()
+@click.option("--confirm/--no-confirm", default=True, help="Just do it.")
+@click.pass_context
+def delete_empty_folders(ctx: click.Context, confirm: bool) -> None:
+    global_opts = ctx.obj
+
+    logger.info("Removing empty folders...")
+    client = imap_connect(global_opts.username, global_opts.password)
+
+    for raw_folder in list(client.list_folders()):
+        folder = str(raw_folder[2])
+        if len(folder) > 1:
+            if folder.startswith("[Gmail]"):
+                logger.info(f"Skipping GMAIL-specific folder: {folder!r}")
+                continue
+
+        logger.debug(f"Selecting folder {folder!r}...")
+        try:
+            print(folder)
+            resp = client.select_folder(folder)
+            logger.debug(f"select_folder response: {resp!r}")
+        except IMAPClient.Error as error:
+            logger.info(f"Skipping mailbox {folder!r} due to error: {error}")
+            continue
+
+        logger.debug(f"Searching messages in folder {folder!r}...")
+        message_ids = client.search()
+        num_messages = len(message_ids)
+        logger.info(f"Found {num_messages} in folder {folder!r}.")
+
+        client.close_folder()
+
+        if num_messages > 0:
+            continue
+
+        if not confirm or click.confirm(
+            f"Do you want to delete empty folder {folder!r}?"
+        ):
+            logger.debug(f"Deleting folder {folder!r}...")
+            resp = client.delete_folder(folder)
+            logger.debug(f"delete_folder response: {resp!r}")
+
     client.logout()
 
 
