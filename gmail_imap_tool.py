@@ -24,10 +24,17 @@ import click
 import click_config_file
 from datetime import datetime
 import email
+import logging
 from typing import List
 
 import appdirs
 from imapclient import IMAPClient
+
+
+class GlobalOpts:
+    username: str
+    password: str
+    debug: bool
 
 
 @click.group()
@@ -40,40 +47,48 @@ from imapclient import IMAPClient
     config_file_name=appdirs.user_config_dir("gmail.cfg")
 )
 @click.pass_context
-def gmail_imap_tool(ctx, username, password, debug):
-    ctx.obj["USERNAME"] = username
-    ctx.obj["PASSWORD"] = password
-    ctx.obj["DEBUG"] = debug
+def gmail_imap_tool(ctx: click.Context, username: str, password: str, debug: bool):
+    global_opts = ctx.obj
+    global_opts.username = username
+    global_opts.password = password
+    global_opts.debug = debug
+
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
 
 @gmail_imap_tool.command()
 @click.option("--chunk-size", default=1024, help="GMAIL folder to delete.")
+@click.option("--confirm/--no-confirm", default=True, help="Just do it.")
 @click.option(
     "--dry-run", required=False, default=False, help="dry-run, do not delete."
 )
 @click.option("--folder", required=True, help="GMAIL folder to delete.")
 @click.pass_context
-def delete_folder(ctx, folder: str, dry_run: bool, chunk_size: int) -> None:
-    username = ctx.obj["USERNAME"]
-    password = ctx.obj["PASSWORD"]
-    debug = ctx.obj["DEBUG"]
+def delete_folder(
+    ctx: click.Context, chunk_size: int, confirm: bool, dry_run: bool, folder: str
+) -> None:
+    global_opts = ctx.obj
 
     click.echo(f"Removing folder: {folder}")
-    client = imap_connect(username, password)
+    client = imap_connect(global_opts.username, global_opts.password)
     resp = client.select_folder(folder)
-    if debug:
-        print("select_folder response:", resp)
+    logging.debug("select_folder response:", resp)
 
     message_ids = client.search()
     num_messages = len(message_ids)
 
-    if click.confirm(
+    if confirm and click.confirm(
         f"Do you want to preview {num_messages} messages from {folder!r}?"
     ):
         preview_ids = list(set(message_ids[:128] + message_ids[-128:]))
         print_emails(client, preview_ids)
 
-    if click.confirm(f"Do you want to delete {num_messages} messages from {folder!r}?"):
+    if not confirm or click.confirm(
+        f"Do you want to delete {num_messages} messages from {folder!r}?"
+    ):
         while len(message_ids) > 0:
             current_ids = message_ids[:chunk_size]
             click.echo(
@@ -83,22 +98,15 @@ def delete_folder(ctx, folder: str, dry_run: bool, chunk_size: int) -> None:
             )
             message_ids = message_ids[chunk_size:]
 
-            if debug:
-                click.echo("Setting label to Trash...")
-
+            logging.debug("Setting label to Trash...")
             resp = client.set_gmail_labels(current_ids, "\\Trash")
+            logging.debug("set_gmail_labels response:", resp)
 
-            if debug:
-                click.echo("set_gmail_labels response:", resp)
-
-            if debug:
-                click.echo("Deleting messages...")
-
+            logging.debug("Deleting messages...")
             resp = client.delete_messages(current_ids)
-            if debug:
-                click.echo("delete_messages response:", resp)
+            logging.debug("delete_messages response:", resp)
 
-        click.echo("Expunging messages...")
+        logging.info("Expunging messages...")
         client.expunge()
 
     client.close_folder()
@@ -107,22 +115,20 @@ def delete_folder(ctx, folder: str, dry_run: bool, chunk_size: int) -> None:
 
 @gmail_imap_tool.command()
 @click.pass_context
-def print_folders(ctx) -> None:
-    username = ctx.obj["USERNAME"]
-    password = ctx.obj["PASSWORD"]
-    client = imap_connect(username, password)
-    click.echo("Found folders:")
+def print_folders(ctx: click.Context) -> None:
+    global_opts = ctx.obj
+    client = imap_connect(global_opts.username, global_opts.password)
     for folder in client.list_folders():
         name = folder[2]
-        click.echo(f"\t{name}")
+        click.echo(name)
     client.logout()
 
 
 def imap_connect(username: str, password: str) -> IMAPClient:
-    click.echo("Connecting to GMAIL...")
+    logging.debug("Connecting to GMAIL...")
     client = IMAPClient("imap.gmail.com", ssl=True)
     client.login(username, password)
-    click.echo("Connected...")
+    logging.debug("Connected...")
     return client
 
 
@@ -131,8 +137,8 @@ def print_emails(client: IMAPClient, message_ids: List[int]) -> None:
     for message in messages.values():
         message_data = message[b"RFC822"]
         message = email.message_from_bytes(message_data)
-        print(message["subject"])
+        click.echo(message["subject"])
 
 
 if __name__ == "__main__":
-    gmail_imap_tool(obj={})
+    gmail_imap_tool(obj=GlobalOpts)
