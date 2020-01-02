@@ -127,8 +127,8 @@ def imap_connect(username: str, password: str) -> IMAPClient:
 def print_emails(client: IMAPClient, message_ids: List[int]) -> None:
     messages = client.fetch(message_ids, ("RFC822",))
     for message in messages.values():
-        message_data = message[b"RFC822"].decode()
-        message = email.message_from_string(message_data)
+        message_data = message[b"RFC822"]
+        message = email.message_from_bytes(message_data)
         print(message["subject"])
 
 
